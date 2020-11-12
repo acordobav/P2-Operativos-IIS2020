@@ -73,6 +73,8 @@ int main(int argc, char **argv) {
     for (int i = 0; i < nthreads; i++)
        pthread_join(threads_id[i], NULL);
         
+    printf("Hilos finalizados\n");
+
     return 0;
 }
 
