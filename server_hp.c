@@ -113,7 +113,7 @@ int createDirectory(char* filepath) {
 }
 
 /**
- * Funcion para crear el directorios de carpetas del servidor
+ * Funcion para crear los directorios del servidor
 */
 void createFolder() {
     // Creacion carpeta raiz de los servidor Heavy Process
