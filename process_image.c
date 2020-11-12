@@ -3,9 +3,8 @@
 #include <png.h>
 #include <stdlib.h>
 
-//#include "matrix.c"
-//#include "image.c"
-#include "read_image.c"
+#include "matrix.c"
+#include "image.c"
 
 int** conv2(int m1, int n1, int** matrix, int m2, int n2, int kernel[][n2]);
 void writeImage(char* filename, Image image);
@@ -160,11 +159,4 @@ void writeImage(char* filename, Image image) {
 	png_free_data(png_ptr, info_ptr, PNG_FREE_ALL, -1);
 	png_destroy_write_struct(&png_ptr, (png_infopp)NULL);
 	free(row);
-}
-
-int main() {
-    Image image = readImage("images/apples.png");
-    Image filtered = sobel_filter(image);
-    writeImage("test.png", filtered);
-    return 0;
 }
