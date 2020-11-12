@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 /**
  * Funcion para concatenar un string s2 al final de un string s1
@@ -27,4 +28,13 @@ char* int2str(int number) {
     char* sNumber = malloc(n+1);
     snprintf(sNumber, n+1, "%d", number);
     return sNumber;
+}
+
+/**
+ * Funcion para crear un directorio
+ * filepath: ruta con la direccion y nombre de la carpeta
+ * return: 0 en caso exitoso, -1 si hubo un error
+*/ 
+int createDirectory(char* filepath) {
+    return mkdir(filepath, 0777);
 }
