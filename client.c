@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
         pthread_create(&threads_id[i], NULL, sendRequest, request);
     }
 
-    printf("Todos los hilos creados, esperando finalizacion\n");
+    printf("Todos los hilos creados\n");
 
     // Espera a que todos los hilos finalicen
     for (int i = 0; i < nthreads; i++)
