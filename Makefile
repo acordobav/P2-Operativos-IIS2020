@@ -1,4 +1,4 @@
-all : client server server_hp
+all : client server_seq server_hp
 .PHONY : all
 
 client : client.c
