@@ -171,6 +171,13 @@ void createProcesses(int count) {
     sleep(1);
 }
 
+/**
+ * Funcion para atender las solicitudes enviadas por el proceso padre
+ * semaphore_name: identificador del semaforo
+ * status: memoria compartida para el estado del proceso
+ * write_enable: determina si la imagen recibida se debe guardar o no
+ * worker_sd: descriptor del pipe de lectura del proceso hijo
+*/
 void processFunction(char* semaphore_name, int* status, int* write_enable, int worker_sd){
     // Limpieza de memoria
     free(sem_names);
@@ -189,6 +196,7 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int w
         // Se espera por senal del proceso padre
         sem_wait(semaphore);
 
+        // Se recibe el descriptor del cliente
         int clientSocket = receiveFileDescriptor(worker_sd);
         
         // Se atiende la solicitud
@@ -200,6 +208,11 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int w
     exit(0);
 }
 
+/**
+ * Funcion para recibir un file descriptor proveniente del proceso padre
+ * worker_sd: descriptor del pipe de lectura del proceso hijo
+ * return: descriptor enviado por el proceso padre
+*/
 int receiveFileDescriptor(int worker_sd) {
     struct msghdr  child_msg;
     int pass_sd, rc;
@@ -220,6 +233,11 @@ int receiveFileDescriptor(int worker_sd) {
     return pass_sd;
 }
 
+/**
+ * Funcion para enviar un file descriptor a uno de los procesos hijos
+ * server_sd: descriptor del pipe de escritura del proceso padre
+ * clientSocket: descriptor del socket que se debe enviar al proceso hijo
+*/
 void sendFileDescriptor(int server_sd, int clientSocket) {
     struct msghdr parent_msg;
 
