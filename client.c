@@ -25,6 +25,7 @@ int sendImage(Image image, int socket);
 char* int2str(int number);
 char* concat(const char *s1, const char *s2);
 void* sendRequest(void* request);
+void* sendRequestsNumber(char* serverIP, int port, int requests);
 
 int main(int argc, char **argv) {
     if(argc != 6) {
@@ -49,6 +50,9 @@ int main(int argc, char **argv) {
 
     // Numero de ciclos
     int ncycles = atoi(argv[5]);
+
+    // Enviar cantidad de solicitudes que seran enviadas
+    sendRequestsNumber(serverIP, port, nthreads*ncycles);
 
     // Lectura de la imagen
     Image image = readImage(filepath); 
@@ -130,6 +134,38 @@ void* sendRequest(void* requestStruct){
         // Se cierra la conexion con el servidor
         shutdown(clientSocket, SHUT_RDWR);
     }
+}
+
+/**
+ * Funcion para enviar la cantidad de solicitudes 
+ * que seran enviadas al servidor
+ * requestStruct: struct con los argumentos de la solicitud
+*/
+void* sendRequestsNumber(char* serverIP, int port, int requests){
+    // Creacion del socket
+    int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    
+    // Configuracion de direccion y puerto del cliente
+    struct sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port); // Puerto
+    serverAddr.sin_addr.s_addr = inet_addr(serverIP); // Direccion IP del servidor 
+
+    // Se intenta conectar con el puerto de la direccion ip establecida
+    if (connect(clientSocket, (struct sockaddr *) &serverAddr, sizeof(serverAddr)) < 0) {
+        printf("Error al intentar conectar con el servidor\n");
+        exit(1);
+    }
+
+    // Envio del mensaje de inicio
+    char* s_requests = int2str(requests);
+    if (!send(clientSocket, s_requests, BUFFER_SIZE, 0)) {
+        printf("Error al enviar mensaje de cantidad de solicitudes");
+        exit(1);
+    }
+    // Se cierra la conexion con el servidor
+    shutdown(clientSocket, SHUT_RDWR);
+    free(s_requests);
 }
 
 /**

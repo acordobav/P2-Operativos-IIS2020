@@ -8,6 +8,24 @@
 #include "receive_image.c"
 #include "general_functions.c"
 
+int receiveRequestsNumber(int serverSocket) {
+    // Estructura para obtener la informacion del cliente
+    struct sockaddr_in clientAddr;
+    unsigned int sin_size = sizeof(clientAddr);
+
+    // Se espera por una conexion con un cliente
+    int clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddr, &sin_size);
+
+    // Creacion y limpieza del buffer
+    unsigned char* buffer = (char*) malloc(sizeof(unsigned char)*BUFFER_SIZE);
+    memset(buffer, 0, sizeof(unsigned char)*BUFFER_SIZE);
+
+    // Se espera por el mensaje de inicio
+    recv(clientSocket, buffer, BUFFER_SIZE, 0);
+
+    return atoi(buffer);
+}
+
 /**
  * Funcion que se encarga de atender la solicitud del cliente
  * clientSocket: identificador del socket del cliente

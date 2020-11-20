@@ -15,6 +15,8 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 
+#include <sys/time.h>
+
 #include "server_functions.c"
 
 #define SEM_PERMS (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
@@ -76,6 +78,14 @@ int main(int argc, char **argv) {
     // Creacion de los procesos
     createProcesses(processCount);
 
+    // Recibir cantidad de solicitudes que seran enviadas
+    int requests = receiveRequestsNumber(serverSocket);
+
+    // start timer
+    struct timeval t1, t2;
+    double elapsedTime;
+    gettimeofday(&t1, NULL);
+
     // Manejo de las consultas de los clientes
     while (1) {
         // Estructura para obtener la informacion del cliente
@@ -113,6 +123,22 @@ int main(int argc, char **argv) {
             }
         }
         printf("%d solicitudes recibidas!\n", requestCounter);
+
+        if (requestCounter == requests){
+            // Espera a que todos los procesos hijos terminen
+            while(1) {
+                int finished = 1;
+                for (int i = 0; i < processCount; i++)
+                    if(!childs[i].status) finished = 0;    
+                if (finished) break;
+            }
+
+            // Obtener tiempo transcurrido
+            gettimeofday(&t2, NULL);
+            elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
+            elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
+            printf("%f s\n", elapsedTime);
+        }
     }
 
     return 0;
