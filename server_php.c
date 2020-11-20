@@ -20,19 +20,25 @@
 #define SEM_PERMS (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 char* sem_name = "/sem_serverphp_c";
 
+typedef struct ChildProcess {
+    pid_t id;
+    int* status;
+    int* write_enable;
+    int pipe;
+    sem_t* semaphore;
+} ChildProcess;
+
 int processCount = 0;       // Cantidad de procesos
 int serverSocket;           // Socket descriptor del servidor
 char* folderpath;           // Directorio donde se guardan las imagenes
-pid_t* process_id;          // Lista con los identificadores de los hijos
-sem_t** semaphores;         // Lista con los semaforos
 char** sem_names;           // Lista con los nombres de los semaforos
-int** child_status;         // Lista con el estado de los hijos
-int** child_write_enable;   // Lista con el write enable de los hijos
-int** child_socket_client;  // Lista con para pasar el cliente a los hijos
+ChildProcess* childs;       // Lista con la informacion de los procesos hijo
 
 void createProcesses(int count);
-void processFunction(char* semaphore_name, int* status, int* write_enable, int* client_socket);
+void processFunction(char* semaphore_name, int* status, int* write_enable, int worker_sd);
 void handle_sigint(int sig);
+int receiveFileDescriptor(int worker_sd);
+void sendFileDescriptor(int server_sd, int clientSocket);
 
 int main(int argc, char **argv) {
     // Manejo de la senal SIGINT
@@ -55,7 +61,7 @@ int main(int argc, char **argv) {
     // Configuracion de direccion y puerto del servidor
     struct sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(8080); // Puerto
+    serverAddr.sin_port = htons(8085); // Puerto
     serverAddr.sin_addr.s_addr = INADDR_ANY; // Direccion IP
     
     // Se asigna el puerto al socket
@@ -82,24 +88,24 @@ int main(int argc, char **argv) {
         int assigned = 0;
         while(!assigned) {
             for (int i = 0; i < processCount; i++) {
-                // Se verifica si el proceso hijo se encuentra disponible
-                if(*child_status[i]) {
-                    // Reiniciar disponibilidad del proceso hijo
-                    *child_status[i] = 0;
+                ChildProcess process = childs[i];
 
-                    printf("Hijo disponible! %d %d\n", process_id[i], clientSocket);
+                // Se verifica si el proceso hijo se encuentra disponible
+                if(*process.status) {
+                    // Reiniciar disponibilidad del proceso hijo
+                    *process.status = 0;
 
                     // Aumentar contador de consultas atendidas
                     requestCounter++;
 
                     // Establecer write enable para la solicitud
-                    *child_write_enable[i] = requestCounter;
+                    *process.write_enable = requestCounter;
 
-                    // Establecer cliente que debe atender el proceso hijo
-                    *child_socket_client[i] = clientSocket;
+                    // Se envia el fd del cliente que debe atender el proceso hijo
+                    sendFileDescriptor(process.pipe, clientSocket);
 
                     // Se despierta al proceso hijo
-                    sem_post(semaphores[i]);
+                    sem_post(process.semaphore);
 
                     assigned = 1;
                     break;
@@ -114,15 +120,12 @@ int main(int argc, char **argv) {
 
 void createProcesses(int count) {
     // Solicitud de espacio para almacenar en memoria las listas de control
-    process_id = (pid_t*) malloc(sizeof(pid_t)*count); 
+    childs = (ChildProcess*) malloc(sizeof(*childs)*processCount);    
     sem_names = (char**) malloc(sizeof(char*)*count); 
-    semaphores = (sem_t**) malloc(sizeof(sem_t*)*count);  
-    child_status = (int**) malloc(sizeof(int*)*count); 
-    child_write_enable = (int**) malloc(sizeof(int*)*count); 
-    child_socket_client = (int**) malloc(sizeof(int*)*count); 
-
 
     for (int i = 0; i < count; i++) {
+        ChildProcess process;
+        
         // Creacion del nombre del semaforo
         char* sem_num = int2str(i);
         sem_names[i] = concat(sem_name, sem_num);
@@ -133,42 +136,45 @@ void createProcesses(int count) {
         int visibility = MAP_SHARED | MAP_ANONYMOUS;
 
         // Estado de disponibilidad del proceso hijo
-        child_status[i] = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
-        *child_status[i] = 1;
+        process.status = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
+        *process.status = 1;
         
         // Write enable del proceso hijo
-        child_write_enable[i] = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
-        *child_write_enable[i] = 0;
+        process.write_enable = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
         
-        // Memoria para pasar el cliente al proceso hijo
-        child_socket_client[i] = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
-        *child_socket_client[i] = -1;
-
         // Apertura del semaforo
-        semaphores[i] = sem_open(sem_names[i], O_CREAT | O_EXCL, SEM_PERMS, 0);
+        process.semaphore = sem_open(sem_names[i], O_CREAT | O_EXCL, SEM_PERMS, 0);
+
+        int server_sd, worker_sd, pair_sd[2];
+        if(socketpair(AF_UNIX, SOCK_DGRAM, 0, pair_sd) < 0) {
+            exit(EXIT_FAILURE);
+        }
+        server_sd = pair_sd[0];
+        worker_sd = pair_sd[1];
 
         // Creacion del proceso hijo
-        process_id[i] = fork();
+        process.id = fork();
 
-        if(process_id[i] == 0) {  // Proceso hijo
+        if(process.id == 0) {  // Proceso hijo
+            close(server_sd);
             processFunction(sem_names[i], 
-                            child_status[i], 
-                            child_write_enable[i], 
-                            child_socket_client[i]);
+                            process.status, 
+                            process.write_enable,
+                            worker_sd); 
         }
-        printf("%d\n", process_id[i]);
+        printf("%d\n", process.id);
+        process.pipe = server_sd;
+        close(worker_sd);
+
+        childs[i] = process;
     }
     sleep(1);
 }
 
-void processFunction(char* semaphore_name, int* status, int* write_enable, int* client_socket){
+void processFunction(char* semaphore_name, int* status, int* write_enable, int worker_sd){
     // Limpieza de memoria
-    free(process_id);
     free(sem_names);
-    free(semaphores);
-    free(child_status);
-    free(child_write_enable);
-    free(child_socket_client);
+    free(childs);
 
     // Apertura del semaforo para sincronizacion con el proceso padre
     sem_t *semaphore = sem_open(semaphore_name, O_RDWR);
@@ -182,8 +188,11 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int* 
     while(1) {
         // Se espera por senal del proceso padre
         sem_wait(semaphore);
+
+        int clientSocket = receiveFileDescriptor(worker_sd);
+        
         // Se atiende la solicitud
-        attendRequest(*client_socket, *write_enable, folderpath);
+        attendRequest(clientSocket, *write_enable, folderpath);
         
         // Se restablece el estado de disponible
         *status = 1;
@@ -191,26 +200,66 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int* 
     exit(0);
 }
 
+int receiveFileDescriptor(int worker_sd) {
+    struct msghdr  child_msg;
+    int pass_sd, rc;
+
+    memset(&child_msg,   0, sizeof(child_msg));
+    char cmsgbuf[CMSG_SPACE(sizeof(int))];
+    child_msg.msg_control = cmsgbuf; // make place for the ancillary message to be received
+    child_msg.msg_controllen = sizeof(cmsgbuf);
+
+    rc = recvmsg(worker_sd, &child_msg, 0);
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&child_msg);
+    if (cmsg == NULL || cmsg -> cmsg_type != SCM_RIGHTS) {
+        printf("The first control structure contains no file descriptor.\n");
+        exit(0);
+    }
+    memcpy(&pass_sd, CMSG_DATA(cmsg), sizeof(pass_sd));
+
+    return pass_sd;
+}
+
+void sendFileDescriptor(int server_sd, int clientSocket) {
+    struct msghdr parent_msg;
+
+    memset(&parent_msg, 0, sizeof(parent_msg));
+    struct cmsghdr *cmsg;
+    char cmsgbuf[CMSG_SPACE(sizeof(clientSocket))];
+    parent_msg.msg_control = cmsgbuf;
+    parent_msg.msg_controllen = sizeof(cmsgbuf); // necessary for CMSG_FIRSTHDR to return the correct value
+    cmsg = CMSG_FIRSTHDR(&parent_msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(clientSocket));
+    memcpy(CMSG_DATA(cmsg), &clientSocket, sizeof(clientSocket));
+    parent_msg.msg_controllen = cmsg->cmsg_len; // total size of all control blocks
+
+    if((sendmsg(server_sd, &parent_msg, 0)) < 0)
+    {
+        perror("sendmsg()");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/**
+ * Funcion para manejar la accion realizada cuando el usuario
+ * utiliza CTRL+C para detener el proceso padre
+*/
 void handle_sigint(int sig) { 
     for (int i = 0; i < processCount; i++) {
         // Destruir semaforos
         sem_unlink(sem_names[i]);
-        free(sem_names[i]);
         
         // Eliminar procesos
-        kill(process_id[i], SIGKILL);
+        kill(childs[i].id, SIGKILL);
     }
 
     // Cerrar la conexion
     shutdown(serverSocket, SHUT_RDWR);
 
-    free(process_id);
+    free(childs);
     free(sem_names);
-    free(semaphores);
     free(folderpath);
-    free(child_status);
-    free(child_write_enable);
-    free(child_socket_client);
-
     exit(0);
 } 
