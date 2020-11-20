@@ -29,12 +29,3 @@ char* int2str(int number) {
     snprintf(sNumber, n+1, "%d", number);
     return sNumber;
 }
-
-/**
- * Funcion para crear un directorio
- * filepath: ruta con la direccion y nombre de la carpeta
- * return: 0 en caso exitoso, -1 si hubo un error
-*/ 
-int createDirectory(char* filepath) {
-    return mkdir(filepath, 0777);
-}

@@ -14,4 +14,4 @@ server_php : server_php.c
 	gcc server_php.c -lpng -lpthread -o server_php
 
 clear:
-	rm server_hp && rm server_php && rm server_seq
+	rm server_hp && rm server_php && rm server_seq && rm client
