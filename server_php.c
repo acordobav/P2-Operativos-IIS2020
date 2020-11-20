@@ -15,45 +15,42 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 
-#include "receive_image.c"
-#include "general_functions.c"
+#include "server_functions.c"
 
 #define SEM_PERMS (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 char* sem_name = "/sem_serverphp_c";
 
-char* folderpath;
-int processCount;
-pid_t* process_id;  // Lista con los identificadores de los hijos
-sem_t** semaphores;  // Lista con los semaforos
-char** sem_names;  // Lista con los nombres de los semaforos
-int** child_status;  // Lista con el estado de los hijos
-int** child_write_enable;  // Lista con el write enable de los hijos
+int processCount = 0;       // Cantidad de procesos
+int serverSocket;           // Socket descriptor del servidor
+char* folderpath;           // Directorio donde se guardan las imagenes
+pid_t* process_id;          // Lista con los identificadores de los hijos
+sem_t** semaphores;         // Lista con los semaforos
+char** sem_names;           // Lista con los nombres de los semaforos
+int** child_status;         // Lista con el estado de los hijos
+int** child_write_enable;   // Lista con el write enable de los hijos
+int** child_socket_client;  // Lista con para pasar el cliente a los hijos
 
 void createProcesses(int count);
-void processFunction(char* semaphore_name, int* status, int* write_enable);
-void attendRequest(int clientSocket, int id);
-void createFolder();
+void processFunction(char* semaphore_name, int* status, int* write_enable, int* client_socket);
+void handle_sigint(int sig);
 
 int main(int argc, char **argv) {
+    // Manejo de la senal SIGINT
+    signal(SIGINT, handle_sigint);
+
     // Verificacion numero de argumentos
     if(argc != 2) {
         printf("Debe ingresar la cantidad de procesos como argumento\n");
         exit(1);
     }
     processCount = atoi(argv[1]);
-    createProcesses(processCount);
-
-    for (int i = 0; i < processCount; i++) {
-        printf("%d\n", process_id[i]);
-    }
-    /*return 0;
 
     // Creacion de directorios
-    createFolder();
+    folderpath = createFolder("pre_heavy_process");
     printf("%s\n", folderpath);
 
     // Creacion del descriptor del socket
-    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     
     // Configuracion de direccion y puerto del servidor
     struct sockaddr_in serverAddr;
@@ -67,6 +64,12 @@ int main(int argc, char **argv) {
     // Escucha de conexiones entrantes
     listen(serverSocket, __INT_MAX__);
 
+    // Contador de consultas
+    int requestCounter = 0;
+
+    // Creacion de los procesos
+    createProcesses(processCount);
+
     // Manejo de las consultas de los clientes
     while (1) {
         // Estructura para obtener la informacion del cliente
@@ -76,27 +79,35 @@ int main(int argc, char **argv) {
         // Se espera por una conexion con un cliente
         int clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddr, &sin_size);
 
-        int pid = 1;//fork();
-        if(pid == 0) attendRequest(clientSocket, processCount); //Child process
-        //printf("%d solicitudes recibidas!\n", processCount);
-    }
+        int assigned = 0;
+        while(!assigned) {
+            for (int i = 0; i < processCount; i++) {
+                // Se verifica si el proceso hijo se encuentra disponible
+                if(*child_status[i]) {
+                    // Reiniciar disponibilidad del proceso hijo
+                    *child_status[i] = 0;
 
-    // Cerrar la conexion
-    shutdown(serverSocket, SHUT_RDWR);*/
-    
-    // Destruir semaforos
-    for (int i = 0; i < processCount; i++) {
-        sem_unlink(sem_names[i]);
-        free(sem_names[i]);
-        //waitpid(process_id[i], NULL, 0);
-        kill(process_id[i], SIGKILL);
-    }
-    printf("Hijos terminados:)\n");
+                    printf("Hijo disponible! %d %d\n", process_id[i], clientSocket);
 
-    free(sem_names);
-    free(process_id);
-    free(semaphores);
-    free(folderpath);
+                    // Aumentar contador de consultas atendidas
+                    requestCounter++;
+
+                    // Establecer write enable para la solicitud
+                    *child_write_enable[i] = requestCounter;
+
+                    // Establecer cliente que debe atender el proceso hijo
+                    *child_socket_client[i] = clientSocket;
+
+                    // Se despierta al proceso hijo
+                    sem_post(semaphores[i]);
+
+                    assigned = 1;
+                    break;
+                }
+            }
+        }
+        printf("%d solicitudes recibidas!\n", requestCounter);
+    }
 
     return 0;
 }
@@ -108,6 +119,7 @@ void createProcesses(int count) {
     semaphores = (sem_t**) malloc(sizeof(sem_t*)*count);  
     child_status = (int**) malloc(sizeof(int*)*count); 
     child_write_enable = (int**) malloc(sizeof(int*)*count); 
+    child_socket_client = (int**) malloc(sizeof(int*)*count); 
 
 
     for (int i = 0; i < count; i++) {
@@ -119,131 +131,86 @@ void createProcesses(int count) {
         // Creacion del espacio de memoria compartida
         int protection = PROT_READ | PROT_WRITE;
         int visibility = MAP_SHARED | MAP_ANONYMOUS;
+
         // Estado de disponibilidad del proceso hijo
         child_status[i] = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
-        *child_status[i] = 0;
+        *child_status[i] = 1;
+        
         // Write enable del proceso hijo
         child_write_enable[i] = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
         *child_write_enable[i] = 0;
-
-        // Creacion del proceso hijo
-        process_id[i] = fork();
+        
+        // Memoria para pasar el cliente al proceso hijo
+        child_socket_client[i] = (int*) mmap(NULL, sizeof(int*), protection, visibility, -1, 0);
+        *child_socket_client[i] = -1;
 
         // Apertura del semaforo
         semaphores[i] = sem_open(sem_names[i], O_CREAT | O_EXCL, SEM_PERMS, 0);
 
+        // Creacion del proceso hijo
+        process_id[i] = fork();
+
         if(process_id[i] == 0) {  // Proceso hijo
-            processFunction(sem_names[i], child_status[i], child_write_enable[i]);
-            //exit(0); //Child process
+            processFunction(sem_names[i], 
+                            child_status[i], 
+                            child_write_enable[i], 
+                            child_socket_client[i]);
         }
+        printf("%d\n", process_id[i]);
     }
-    sleep(2);
-    /*
-    for (int j = 0; j < 2; j++)
-    {
-        for (int i = 0; i < count; i++)
-        {
-            sem_post(semaphores[i]);
-        }
-        sleep(1);
-    }
-    */
-
-
+    sleep(1);
 }
 
-void processFunction(char* semaphore_name, int* status, int* write_enable){
+void processFunction(char* semaphore_name, int* status, int* write_enable, int* client_socket){
     // Limpieza de memoria
     free(process_id);
     free(sem_names);
     free(semaphores);
     free(child_status);
     free(child_write_enable);
+    free(child_socket_client);
 
     // Apertura del semaforo para sincronizacion con el proceso padre
     sem_t *semaphore = sem_open(semaphore_name, O_RDWR);
     if (semaphore == SEM_FAILED) {
+        *status = 0;
         perror("sem_open(3) failed");
         exit(EXIT_FAILURE);
     }
 
-    /*
-    sleep(15);
-    sem_wait(semaphore);
-    printf("He revivido!\n");
-    sem_wait(semaphore);
-    printf("He revivido 2 veces!\n");
-    sem_unlink(semaphore_name);
-    //exit(0);
-    */
-    printf("%d\n", *write_enable);
-    exit(0);
-
-}
-
-/**
- * Funcion que se encarga de atender la solicitud del cliente
- * clientSocket: identificador del socket del cliente
- * id: identificador del proceso que atiende la solicutd
-*/
-void attendRequest(int clientSocket, int id) {
-    unsigned char* buffer = (char*) malloc(sizeof(unsigned char)*BUFFER_SIZE);
-    
-    // Limpieza del buffer
-    memset(buffer, 0, sizeof(unsigned char)*BUFFER_SIZE);
-    
-    // Se espera por el mensaje de inicio
-    recv(clientSocket, buffer, BUFFER_SIZE, 0);
-
-    // Recepcion del archivo
-    Image* image = receiveImage(clientSocket);
-
-    // Procesamiento de la imagen
-    Image filtered = sobel_filter(*image);
-
-    // Guardado de la imagen
-    if (id <= 100) {
-        char* s_id = int2str(id);
-        char* filename = concat(s_id,".png");
-        char* filepath = concat(folderpath, filename);
-        writeImage(filepath, filtered);
-
-        free(s_id);
-        free(filename);
-        free(filepath);
+    // Ciclo infinito para atender las consultas de los clientes
+    while(1) {
+        // Se espera por senal del proceso padre
+        sem_wait(semaphore);
+        // Se atiende la solicitud
+        attendRequest(*client_socket, *write_enable, folderpath);
+        
+        // Se restablece el estado de disponible
+        *status = 1;
     }
-    
-    // Limpieza de memoria
-    free(image->data);
-    free(filtered.data);
-    free(image);
-    free(buffer);
-
-    // Se cierra la conexion
-    shutdown(clientSocket, SHUT_RDWR);
     exit(0);
 }
 
-/**
- * Funcion para crear los directorios del servidor
-*/
-void createFolder() {
-    // Creacion carpeta raiz de los servidor Heavy Process
-    createDirectory("pre_heavy_process");
-
-    char *sCounter = NULL;
-    char *name = NULL;
-    int created = -1; 
-    int counter = 0;
-
-    // Se determina el numero de contenedor correspondiente
-    while (created != 0){
-        counter++;
-        sCounter = int2str(counter);
-        name = concat("pre_heavy_process/server", sCounter);
-        created = createDirectory(name);
+void handle_sigint(int sig) { 
+    for (int i = 0; i < processCount; i++) {
+        // Destruir semaforos
+        sem_unlink(sem_names[i]);
+        free(sem_names[i]);
+        
+        // Eliminar procesos
+        kill(process_id[i], SIGKILL);
     }
-    // Se actualiza la variable global
-    folderpath = concat(name, "/");
-    free(name);
-}
+
+    // Cerrar la conexion
+    shutdown(serverSocket, SHUT_RDWR);
+
+    free(process_id);
+    free(sem_names);
+    free(semaphores);
+    free(folderpath);
+    free(child_status);
+    free(child_write_enable);
+    free(child_socket_client);
+
+    exit(0);
+} 
