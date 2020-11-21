@@ -33,36 +33,38 @@ int main() {
     // Escucha de conexiones entrantes
     listen(serverSocket, __INT_MAX__);
 
-    // Recibir cantidad de solicitudes que seran enviadas
-    int requests = receiveRequestsNumber(serverSocket);
-
-    // start timer
-    struct timeval t1, t2;
-    double elapsedTime;
-    gettimeofday(&t1, NULL);
-
-    int processCount = 0;
-    // Manejo de las consultas de los clientes
     while (1) {
-        // Estructura para obtener la informacion del cliente
-        struct sockaddr_in clientAddr;
-        unsigned int sin_size = sizeof(clientAddr);
+        // Recibir cantidad de solicitudes que seran enviadas
+        int requests = receiveRequestsNumber(serverSocket);
 
-        // Se espera por una conexion con un cliente
-        int clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddr, &sin_size);
+        // start timer
+        struct timeval t1, t2;
+        double elapsedTime;
+        gettimeofday(&t1, NULL);
 
-        // Procesamiento de la solicitud
-        processCount++;
-        attendRequest(clientSocket, processCount, folderpath);
-        printf("%d solicitudes recibidas!\n", processCount);
+        int processCount = 0;
+        // Manejo de las consultas de los clientes
+        while (1) {
+            // Estructura para obtener la informacion del cliente
+            struct sockaddr_in clientAddr;
+            unsigned int sin_size = sizeof(clientAddr);
 
-        if (processCount == requests){
-            // Obtener tiempo transcurrido
-            gettimeofday(&t2, NULL);
-            elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
-            elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
-            printf("%f s\n", elapsedTime);
-            break;
+            // Se espera por una conexion con un cliente
+            int clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddr, &sin_size);
+
+            // Procesamiento de la solicitud
+            processCount++;
+            attendRequest(clientSocket, processCount, folderpath);
+            printf("%d solicitudes recibidas!\n", processCount);
+
+            if (processCount == requests){
+                // Obtener tiempo transcurrido
+                gettimeofday(&t2, NULL);
+                elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
+                elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
+                printf("%f s\n", elapsedTime);
+                break;
+            }
         }
     }
 

@@ -11,16 +11,17 @@
 
 #include <semaphore.h>
 #include <fcntl.h>
-
 #include <sys/mman.h>
 #include <sys/wait.h>
 
+//#include <errno.h>
 #include <sys/time.h>
 
 #include "server_functions.c"
 
 #define SEM_PERMS (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 char* sem_name = "/sem_serverphp_c";
+char* parent_sem = "/sem_parent_php";
 
 typedef struct ChildProcess {
     pid_t id;
@@ -63,7 +64,7 @@ int main(int argc, char **argv) {
     // Configuracion de direccion y puerto del servidor
     struct sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(8085); // Puerto
+    serverAddr.sin_port = htons(8087); // Puerto
     serverAddr.sin_addr.s_addr = INADDR_ANY; // Direccion IP
     
     // Se asigna el puerto al socket
@@ -71,79 +72,84 @@ int main(int argc, char **argv) {
 
     // Escucha de conexiones entrantes
     listen(serverSocket, __INT_MAX__);
-
-    // Contador de consultas
-    int requestCounter = 0;
-
+    
+    // Apertura del semaforo para control del proceso padre
+    sem_t* sem_parent = sem_open(parent_sem, O_CREAT, SEM_PERMS, processCount);
+    
+    if(sem_parent == SEM_FAILED) {
+        printf("sem_open() failed - parent_sem\n");
+        //fprintf(stderr, "Value of errno: %d\n", errno);
+        exit(1);
+    }
+    
     // Creacion de los procesos
     createProcesses(processCount);
 
-    // Recibir cantidad de solicitudes que seran enviadas
-    int requests = receiveRequestsNumber(serverSocket);
-
-    // start timer
-    struct timeval t1, t2;
-    double elapsedTime;
-    gettimeofday(&t1, NULL);
-
-    // Manejo de las consultas de los clientes
     while (1) {
-        // Estructura para obtener la informacion del cliente
-        struct sockaddr_in clientAddr;
-        unsigned int sin_size = sizeof(clientAddr);
+        // Contador de consultas
+        int requestCounter = 0;
 
-        // Se espera por una conexion con un cliente
-        int clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddr, &sin_size);
+        // Recibir cantidad de solicitudes que seran enviadas
+        int requests = receiveRequestsNumber(serverSocket);
 
-        int assigned = 0;
-        while(!assigned) {
+        // start timer
+        struct timeval t1, t2;
+        double elapsedTime;
+        gettimeofday(&t1, NULL);
+
+        // Manejo de las consultas de los clientes
+        while (1) {
+            // Estructura para obtener la informacion del cliente
+            struct sockaddr_in clientAddr;
+            unsigned int sin_size = sizeof(clientAddr);
+            // Se espera por una conexion con un cliente
+            int clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddr, &sin_size);
+
+            // Se espera a que exista un proceso hijo disponible
+            sem_wait(sem_parent);
             for (int i = 0; i < processCount; i++) {
                 ChildProcess process = childs[i];
 
                 // Se verifica si el proceso hijo se encuentra disponible
                 if(*process.status) {
-                    // Reiniciar disponibilidad del proceso hijo
-                    *process.status = 0;
-
-                    // Aumentar contador de consultas atendidas
-                    requestCounter++;
-
-                    // Establecer write enable para la solicitud
-                    *process.write_enable = requestCounter;
-
-                    // Se envia el fd del cliente que debe atender el proceso hijo
-                    sendFileDescriptor(process.pipe, clientSocket);
-
-                    // Se despierta al proceso hijo
-                    sem_post(process.semaphore);
-
-                    assigned = 1;
+                    *process.status = 0;  // Reiniciar disponibilidad del proceso hijo
+                    requestCounter++;  // Aumentar contador de consultas atendidas
+                    *process.write_enable = requestCounter;  // Establecer write enable para la solicitud
+                    sendFileDescriptor(process.pipe, clientSocket); // Envio del fd del cliente
+                    sem_post(process.semaphore);  // Se despierta al proceso hijo
                     break;
                 }
             }
-        }
-        printf("%d solicitudes recibidas!\n", requestCounter);
+            
+            printf("%d solicitudes recibidas!\n", requestCounter);
 
-        if (requestCounter == requests){
-            // Espera a que todos los procesos hijos terminen
-            while(1) {
-                int finished = 1;
-                for (int i = 0; i < processCount; i++)
-                    if(!childs[i].status) finished = 0;    
-                if (finished) break;
+            if (requestCounter == requests){
+                // Espera a que todos los procesos hijos terminen
+                while(1) {
+                    int finished = 1;
+                    for (int i = 0; i < processCount; i++)
+                        if(!childs[i].status) finished = 0;    
+                    if (finished) break;
+                }
+
+                // Obtener tiempo transcurrido
+                gettimeofday(&t2, NULL);
+                elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
+                elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
+                printf("%f s\n", elapsedTime);
+
+                break;
             }
-
-            // Obtener tiempo transcurrido
-            gettimeofday(&t2, NULL);
-            elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
-            elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
-            printf("%f s\n", elapsedTime);
         }
     }
 
     return 0;
 }
 
+/**
+ * Funcion para crear una cantidad count de worker process
+ * count: cantidad de procesos a crear
+*/
 void createProcesses(int count) {
     // Solicitud de espacio para almacenar en memoria las listas de control
     childs = (ChildProcess*) malloc(sizeof(*childs)*processCount);    
@@ -170,6 +176,10 @@ void createProcesses(int count) {
         
         // Apertura del semaforo
         process.semaphore = sem_open(sem_names[i], O_CREAT | O_EXCL, SEM_PERMS, 0);
+        if(process.semaphore == SEM_FAILED){
+            perror("sem_open() failed - child semaphore");
+            exit(EXIT_FAILURE);
+        }
 
         int server_sd, worker_sd, pair_sd[2];
         if(socketpair(AF_UNIX, SOCK_DGRAM, 0, pair_sd) < 0) {
@@ -193,8 +203,12 @@ void createProcesses(int count) {
         close(worker_sd);
 
         childs[i] = process;
+        
     }
     sleep(1);
+    /*for (int i = 0; i < count; i++) {
+        sem_unlink(sem_names[i]);
+    }*/
 }
 
 /**
@@ -209,8 +223,13 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int w
     free(sem_names);
     free(childs);
 
+    // Apertura del semaforo para control del proceso padre
+    sem_t* sem_parent = sem_open(parent_sem, O_RDWR);
+    //sem_unlink(parent_sem);
+
     // Apertura del semaforo para sincronizacion con el proceso padre
     sem_t *semaphore = sem_open(semaphore_name, O_RDWR);
+    sem_unlink(semaphore_name);
     if (semaphore == SEM_FAILED) {
         *status = 0;
         perror("sem_open(3) failed");
@@ -230,6 +249,7 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int w
         
         // Se restablece el estado de disponible
         *status = 1;
+        sem_post(sem_parent);
     }
     exit(0);
 }
@@ -291,19 +311,19 @@ void sendFileDescriptor(int server_sd, int clientSocket) {
  * utiliza CTRL+C para detener el proceso padre
 */
 void handle_sigint(int sig) { 
+    sem_unlink(parent_sem);
     for (int i = 0; i < processCount; i++) {
-        // Destruir semaforos
-        sem_unlink(sem_names[i]);
-        
-        // Eliminar procesos
-        kill(childs[i].id, SIGKILL);
+        sem_close(childs[i].semaphore);  // Destruir semaforos
+        kill(childs[i].id, SIGKILL);  // Eliminar procesos
     }
-
-    // Cerrar la conexion
-    shutdown(serverSocket, SHUT_RDWR);
+    shutdown(serverSocket, SHUT_RDWR);  // Cerrar la conexion servidor
 
     free(childs);
     free(sem_names);
     free(folderpath);
     exit(0);
-} 
+}
+
+void handle_sigkill(int sig) {
+    
+}
