@@ -15,3 +15,4 @@ server_php : server_php.c
 
 clean:
 	rm server_hp && rm server_php && rm server_seq && rm client
+	rm -rf sequential && rm -rf heavy_process && rm -rf pre_heavy_process
