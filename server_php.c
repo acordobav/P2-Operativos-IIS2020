@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
 
                 // Actualizar reporte
                 pfile = fopen(report_filename, "a");
-                fprintf(pfile, "%d %f ", processCount, elapsedTime);
+                fprintf(pfile, "%d %f ", requests, elapsedTime);
                 fclose(pfile);
 
                 break;
