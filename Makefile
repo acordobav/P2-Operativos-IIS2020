@@ -8,7 +8,7 @@ server_seq : server_seq.c
 	gcc server_seq.c -lpng -o server_seq
 
 server_hp : server_hp.c
-	gcc server_hp.c -lpng -o server_hp
+	gcc server_hp.c -lpng -lpthread -o server_hp
 
 server_php : server_php.c
 	gcc server_php.c -lpng -lpthread -o server_php
@@ -16,3 +16,4 @@ server_php : server_php.c
 clean:
 	rm server_hp && rm server_php && rm server_seq && rm client
 	rm -rf sequential && rm -rf heavy_process && rm -rf pre_heavy_process
+	rm -f sequential.txt && rm -f heavy_process.txt && rm -f pre_heavy_process.txt

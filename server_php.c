@@ -21,6 +21,7 @@
 #define SEM_PERMS (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
 char* sem_name = "/sem_serverphp_c";
 char* parent_sem = "/sem_parent_php";
+char* report_filename = "pre_heavy_process.txt";
 
 typedef struct ChildProcess {
     pid_t id;
@@ -75,13 +76,15 @@ int main(int argc, char **argv) {
     sem_t* sem_parent = sem_open(parent_sem, O_CREAT, SEM_PERMS, processCount);
     
     if(sem_parent == SEM_FAILED) {
-        printf("sem_open() failed - parent_sem\n");
-        //fprintf(stderr, "Value of errno: %d\n", errno);
-        exit(1);
+        perror("sem_open() failed - parent_sem");
+        exit(EXIT_FAILURE);
     }
     
     // Creacion de los procesos
     createProcesses(processCount);
+
+    FILE* pfile = fopen(report_filename, "w");
+    fclose(pfile);
 
     while (1) {
         // Contador de consultas
@@ -130,7 +133,12 @@ int main(int argc, char **argv) {
                 gettimeofday(&t2, NULL);
                 elapsedTime = (t2.tv_sec - t1.tv_sec);  // segundos
                 elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;  // us to s
-                printf("%f s\n", elapsedTime);
+                printf("Tiempo: %f s\n", elapsedTime);
+
+                // Actualizar reporte
+                pfile = fopen(report_filename, "a");
+                fprintf(pfile, "%d %f ", processCount, elapsedTime);
+                fclose(pfile);
 
                 break;
             }

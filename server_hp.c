@@ -11,20 +11,30 @@
 
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <semaphore.h>
+#include <fcntl.h>
 
 #include "server_functions.c"
 
-char* folderpath;
+#define SEM_PERMS (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
+char* parent_sem = "/parent_sem_hp";
+char* report_filename = "heavy_process.txt";
+
+char* folderpath;  // Directorio donde se guardan las imagenes
+int serverSocket;  // Descriptor del socker servidor
 
 void childFunction(int clientSocket, int id);
+void handle_sigint(int sig);
 
 int main() {
+    signal(SIGINT, handle_sigint);  // Manejo de la senal SIGINT
+
     // Creacion de directorios
     folderpath = createFolder("heavy_process");
     printf("%s\n", folderpath);
 
     // Creacion del descriptor del socket
-    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     
     // Configuracion de direccion y puerto del servidor
     struct sockaddr_in serverAddr;
@@ -38,9 +48,14 @@ int main() {
     // Escucha de conexiones entrantes
     listen(serverSocket, __INT_MAX__);
 
+    // Apertura del semaforo para control del proceso padre
+    sem_t* sem_parent = sem_open(parent_sem, O_CREAT, SEM_PERMS, 0);
+
+    FILE* pfile = fopen(report_filename, "w");
+    fclose(pfile);
     while (1) {
         // Recibir cantidad de solicitudes que seran enviadas
-        int requests = receiveRequestsNumber(serverSocket);
+        int totalRequests = receiveRequestsNumber(serverSocket);
 
         // start timer
         struct timeval t1, t2;
@@ -58,23 +73,30 @@ int main() {
             int clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddr, &sin_size);
 
             processCount++;
-            if(fork() == 0) childFunction(clientSocket, processCount); //Child process
-            printf("%d solicitudes recibidas!\n", processCount);
+            if(fork() == 0) { //Child process
+                childFunction(clientSocket, processCount); 
+                exit(EXIT_SUCCESS);
 
-            if (processCount == requests){
-                // Espera a que todos los procesos hijos terminen
-                int pid;
-                while ((pid = waitpid(-1, NULL, 0)) != -1);
-
-                // Obtener tiempo transcurrido
-                gettimeofday(&t2, NULL);
-                elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
-                elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
-                printf("%f s\n", elapsedTime);
-
-                break;
+            } else { // Parent process
+                printf("%d solicitudes recibidas!\n", processCount);
+                if (processCount == totalRequests){
+                    // Espera a que todos los procesos hijos terminen
+                    for (int i = 0; i < processCount; i++) sem_wait(sem_parent);
+                    break;
+                }
             }
         }
+        
+        // Obtener tiempo transcurrido
+        gettimeofday(&t2, NULL);
+        elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
+        elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
+        printf("Tiempo: %f s\n", elapsedTime);
+
+        // Actualizar reporte
+        pfile = fopen(report_filename, "a");
+        fprintf(pfile, "%d %f ", processCount, elapsedTime);
+        fclose(pfile);
     }
 
     // Cerrar la conexion
@@ -90,6 +112,26 @@ int main() {
  * id: identificador del proceso que atiende la solicutd
 */
 void childFunction(int clientSocket, int id) {
+    // Apertura del semaforo para control del proceso padre
+    sem_t* sem_parent = sem_open(parent_sem, O_RDWR);
+
+    // Procesamiento de la solicitud
     attendRequest(clientSocket, id, folderpath);
+
+    // Indicar al proceso padre de la finalizacion
+    sem_post(sem_parent);
+    sem_close(sem_parent);
+
+    exit(EXIT_SUCCESS);
+}
+
+/**
+ * Funcion para manejar la accion realizada cuando el usuario
+ * utiliza CTRL+C para detener el proceso padre
+*/
+void handle_sigint(int sig) { 
+    sem_unlink(parent_sem);
+    free(folderpath);
+    shutdown(serverSocket, SHUT_RDWR);
     exit(0);
 }

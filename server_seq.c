@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -11,15 +12,21 @@
 
 #include "server_functions.c"
 
-char* folderpath;
+char* folderpath;  // Direccion de la carpeta del servidor
+int serverSocket;  // Descriptor del socker servidor
+char* report_filename = "sequential.txt";
+
+void handle_sigint(int sig);
 
 int main() {
+    signal(SIGINT, handle_sigint);  // Manejo de la senal SIGINT
+
     // Creacion de directorios
     folderpath = createFolder("sequential");
     printf("%s\n", folderpath);
 
     // Creacion del descriptor del socket
-    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     
     // Configuracion de direccion y puerto del servidor
     struct sockaddr_in serverAddr;
@@ -33,6 +40,8 @@ int main() {
     // Escucha de conexiones entrantes
     listen(serverSocket, __INT_MAX__);
 
+    FILE* pfile = fopen(report_filename, "w");
+    fclose(pfile);
     while (1) {
         // Recibir cantidad de solicitudes que seran enviadas
         int requests = receiveRequestsNumber(serverSocket);
@@ -62,7 +71,13 @@ int main() {
                 gettimeofday(&t2, NULL);
                 elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
                 elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
-                printf("%f s\n", elapsedTime);
+                printf("Tiempo: %f s\n", elapsedTime);
+
+                // Actualizar reporte
+                pfile = fopen(report_filename, "a");
+                fprintf(pfile, "%d %f ", processCount, elapsedTime);
+                fclose(pfile);
+
                 break;
             }
         }
@@ -70,7 +85,17 @@ int main() {
 
     // Cerrar la conexion
     shutdown(serverSocket, SHUT_RDWR);
-    
+    fclose(pfile);
     free(folderpath);
     return 0;
+}
+
+/**
+ * Funcion para manejar la accion realizada cuando el usuario
+ * utiliza CTRL+C para detener el proceso padre
+*/
+void handle_sigint(int sig) { 
+    free(folderpath);
+    shutdown(serverSocket, SHUT_RDWR);
+    exit(0);
 }
