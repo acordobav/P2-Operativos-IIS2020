@@ -14,7 +14,6 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 
-//#include <errno.h>
 #include <sys/time.h>
 
 #include "server_functions.c"
@@ -44,13 +43,12 @@ int receiveFileDescriptor(int worker_sd);
 void sendFileDescriptor(int server_sd, int clientSocket);
 
 int main(int argc, char **argv) {
-    // Manejo de la senal SIGINT
-    signal(SIGINT, handle_sigint);
+    signal(SIGINT, handle_sigint);  // Manejo de la senal SIGINT
 
     // Verificacion numero de argumentos
     if(argc != 2) {
         printf("Debe ingresar la cantidad de procesos como argumento\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     processCount = atoi(argv[1]);
 
@@ -125,24 +123,21 @@ int main(int argc, char **argv) {
 
             if (requestCounter == requests){
                 // Espera a que todos los procesos hijos terminen
-                while(1) {
-                    int finished = 1;
-                    for (int i = 0; i < processCount; i++)
-                        if(!childs[i].status) finished = 0;    
-                    if (finished) break;
-                }
+                for (int i = 0; i < processCount; i++)
+                    sem_wait(sem_parent);
 
                 // Obtener tiempo transcurrido
                 gettimeofday(&t2, NULL);
-                elapsedTime = (t2.tv_sec - t1.tv_sec); // segundos
-                elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;   // us to s
+                elapsedTime = (t2.tv_sec - t1.tv_sec);  // segundos
+                elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;  // us to s
                 printf("%f s\n", elapsedTime);
 
                 break;
             }
         }
+        // Restablecer disponibilidad de los procesos hijos
+        for (int i = 0; i < processCount; i++) sem_post(sem_parent);
     }
-
     return 0;
 }
 
@@ -181,6 +176,7 @@ void createProcesses(int count) {
             exit(EXIT_FAILURE);
         }
 
+        // Creacion del pipe para IPC
         int server_sd, worker_sd, pair_sd[2];
         if(socketpair(AF_UNIX, SOCK_DGRAM, 0, pair_sd) < 0) {
             exit(EXIT_FAILURE);
@@ -198,7 +194,7 @@ void createProcesses(int count) {
                             process.write_enable,
                             worker_sd); 
         }
-        printf("%d\n", process.id);
+        printf("Process id: %d\n", process.id);
         process.pipe = server_sd;
         close(worker_sd);
 
@@ -206,9 +202,6 @@ void createProcesses(int count) {
         
     }
     sleep(1);
-    /*for (int i = 0; i < count; i++) {
-        sem_unlink(sem_names[i]);
-    }*/
 }
 
 /**
@@ -225,7 +218,6 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int w
 
     // Apertura del semaforo para control del proceso padre
     sem_t* sem_parent = sem_open(parent_sem, O_RDWR);
-    //sem_unlink(parent_sem);
 
     // Apertura del semaforo para sincronizacion con el proceso padre
     sem_t *semaphore = sem_open(semaphore_name, O_RDWR);
@@ -322,8 +314,4 @@ void handle_sigint(int sig) {
     free(sem_names);
     free(folderpath);
     exit(0);
-}
-
-void handle_sigkill(int sig) {
-    
 }
