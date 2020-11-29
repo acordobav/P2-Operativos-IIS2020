@@ -42,6 +42,7 @@ void processFunction(char* semaphore_name, int* status, int* write_enable, int w
 void handle_sigint(int sig);
 int receiveFileDescriptor(int worker_sd);
 void sendFileDescriptor(int server_sd, int clientSocket);
+void writeChildReport(int childReport[], int processCount);
 
 int main(int argc, char **argv) {
     signal(SIGINT, handle_sigint);  // Manejo de la senal SIGINT
@@ -63,7 +64,7 @@ int main(int argc, char **argv) {
     // Configuracion de direccion y puerto del servidor
     struct sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(8087); // Puerto
+    serverAddr.sin_port = htons(8080); // Puerto
     serverAddr.sin_addr.s_addr = INADDR_ANY; // Direccion IP
     
     // Se asigna el puerto al socket
@@ -98,6 +99,10 @@ int main(int argc, char **argv) {
         double elapsedTime;
         gettimeofday(&t1, NULL);
 
+        // Reporte de solicitudes atendidas por los workers
+        int childReport[processCount];
+        for (int i = 0; i < processCount; i++) childReport[i] = 0;
+
         // Manejo de las consultas de los clientes
         while (1) {
             // Estructura para obtener la informacion del cliente
@@ -118,6 +123,7 @@ int main(int argc, char **argv) {
                     *process.write_enable = requestCounter;  // Establecer write enable para la solicitud
                     sendFileDescriptor(process.pipe, clientSocket); // Envio del fd del cliente
                     sem_post(process.semaphore);  // Se despierta al proceso hijo
+                    childReport[i]++; // Actualizar reporte 
                     break;
                 }
             }
@@ -135,11 +141,13 @@ int main(int argc, char **argv) {
                 elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000000.0;  // us to s
                 printf("Tiempo: %f s\n", elapsedTime);
 
-                // Actualizar reporte
+                // Actualizar reporte proceso padre
                 pfile = fopen(report_filename, "a");
                 fprintf(pfile, "%d %f ", requests, elapsedTime);
                 fclose(pfile);
 
+                // Escribir reporte procesos hijos
+                writeChildReport(childReport, processCount);
                 break;
             }
         }
@@ -322,4 +330,16 @@ void handle_sigint(int sig) {
     free(sem_names);
     free(folderpath);
     exit(0);
+}
+
+/**
+ * Funcion que escribe el reporte de solicitudes por proceso hijo
+ * childReport: lista que contiene la cantidad de solicitudes atendidas
+ *              por cada proceso hijo
+ * processCount: cantidad total de procesos hijos
+**/
+void writeChildReport(int childReport[], int processCount) {
+    FILE* pfile = fopen("php_child_report.txt", "w");  // Abrir archivo
+    for (int i = 0; i < processCount; i++) fprintf(pfile, "%d ", childReport[i]);
+    fclose(pfile);  // Cerrar archivo
 }

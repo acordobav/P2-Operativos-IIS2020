@@ -1,14 +1,20 @@
 clc; clear; close all;
 % Lectura de los archivos de reportes
+%{
 seq = load("-ascii","sequential.txt");
 hp = load("-ascii","heavy_process.txt");
 php = load("-ascii","pre_heavy_process.txt");
+%}
+child_php = load("-ascii","php_child_report.txt");
 
+%{
 % Tamano de la cantidad de muestras
 [~,n1] = size(seq);
 [~,n2] = size(hp);
 [~,n3] = size(php);
-
+%}
+[~,n4] = size(child_php);
+%{
 % Separar cantidad de solicitudes y tiempo
 seq_req  = [];
 seq_time = [];
@@ -70,8 +76,12 @@ ylabel("Tiempo promedio por solicitud [s]");
 title('Cantidad de solicitudes vs Tiempo promedio por solicitud');
 legend('Sequential', 'Heavy Process', 'Pre Heavy Process');
 hold off;
-
+%}
   
-  
-  
-  
+% Grafica Distribucion de carga servidor Pre Heavy Process
+figure
+x = 1:n4;
+w1 = 0.5;
+bar(x, child_php, 'c');
+title("Distribución de carga entre procesos - Servidor Pre Heavy Process");
+grid on;
